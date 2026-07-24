@@ -1929,6 +1929,23 @@ function bankRelationship(c) {
 function sbicRelationship(c) { return c.entry === 'Rejected' ? 'ETB' : 'NTB'; }
 function relationshipChip(rel) { return rel === 'ETB' ? `<span class="chip good"><span class="dot"></span>ETB</span>` : `<span class="chip neutral"><span class="dot"></span>NTB</span>`; }
 
+/* Default sort for the two work-queue lists (Applications, FD Ledger): notable post-issuance
+   states (blocked, invoked, disputed, closed) surface first — same instinct as Home's action list
+   already prioritizing attention items — then most-recently-active within each tier. Without
+   this, a routine application created 2 hours ago always outranks a real blocked-card case from
+   a week ago on pure recency, and alphabetical-by-account (the ledger's old sort) hides them
+   entirely behind whatever account number happened to sort first. */
+function caseLastActivityAt(c) { return c.cardStatusAt ? new Date(c.cardStatusAt) : c.createdAt; }
+function caseSortPriority(c) { return c.cardStatus === 'blocked' ? 2 : c.cardStatus === 'closed' ? 1 : 0; }
+function fdLastActivityAt(f) {
+  if (f.fdStatus && f.fdStatus !== 'active') {
+    const linked = caseById(f.caseId);
+    if (linked && linked.cardStatusAt) return new Date(linked.cardStatusAt);
+  }
+  return new Date(f.settled || f.open);
+}
+function fdSortPriority(f) { return f.fdStatus === 'invoked' ? 3 : f.status === 'Disputed' ? 2 : f.fdStatus === 'closed' ? 1 : 0; }
+
 /* ---------- formatting helpers ---------- */
 function fmtINR(n) { return '₹' + n.toLocaleString('en-IN'); }
 function fmtDT(d) { return d.toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:true }).replace(',', ' ·'); }
@@ -2088,7 +2105,7 @@ function queueFiltered() {
     if (sbicRel && sbicRelationship(c) !== sbicRel) return false;
     if (q && !(`${c.name} ${c.phone} ${c.pan} ${c.id}`.toLowerCase().includes(q))) return false;
     return true;
-  });
+  }).sort((a, b) => (caseSortPriority(b) - caseSortPriority(a)) || (caseLastActivityAt(b) - caseLastActivityAt(a)));
 }
 
 function renderQueue() {
@@ -3472,7 +3489,7 @@ function renderLien() {
     return `<span class="bucket-count">${bankLabel(bank)} — ${rows.length} FD${rows.length>1?'s':''} · ${fmtINR(total)}</span>`;
   }).join(' ');
 
-  const sorted = [...ledger].sort((a, b) => a.bank.localeCompare(b.bank) || a.acc.localeCompare(b.acc));
+  const sorted = [...ledger].sort((a, b) => (fdSortPriority(b) - fdSortPriority(a)) || (fdLastActivityAt(b) - fdLastActivityAt(a)));
   const { slice: pageRows, page, totalPages, total } = paginate(sorted, 'ledger');
   const rowsHtml = pageRows.map(f => `
     <tr class="clickable" data-acc="${f.acc}">
